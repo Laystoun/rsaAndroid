@@ -3,8 +3,8 @@ package com.example.rsaencrypted.encrypted
 import java.math.BigInteger
 import java.security.SecureRandom
 
-class RSAObject {
-    val bitLength = 1024
+class RSAObject(bitLength: Int = 1024) {
+    val bitLength = bitLength
     val rnd = SecureRandom()
 
     // p/q простые числа длинной 1024 бит

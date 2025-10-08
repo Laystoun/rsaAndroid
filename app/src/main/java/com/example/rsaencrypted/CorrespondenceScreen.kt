@@ -22,12 +22,16 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -37,6 +41,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +61,12 @@ import com.example.rsaencrypted.encrypted.EncryptedLogsViewModel
 import com.example.rsaencrypted.encrypted.RSAObject
 import com.example.rsaencrypted.encrypted.decryptMessage
 import com.example.rsaencrypted.encrypted.encryptedMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @Composable
 fun Correspondence(
@@ -63,6 +74,7 @@ fun Correspondence(
     viewModel: EncryptedLogsViewModel
 ) {
     val textFieldValue = remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         viewModel.InitializationKeys()
@@ -72,13 +84,14 @@ fun Correspondence(
 
     Scaffold(
         topBar = {
-            TopBar(navController)
+            TopBar(navController, viewModel)
         },
         bottomBar = {
             BottomBar(
                 textFieldValue,
                 rsa = viewModel.rsa,
-                viewModel = viewModel
+                viewModel = viewModel,
+                scope
             )
         },
         contentWindowInsets = WindowInsets(0, 0, 0, 0)
@@ -99,21 +112,22 @@ fun Correspondence(
             items(viewModel.messages.size) { index ->
                 val msg = viewModel.messages[viewModel.messages.size - 1 - index]
 
-                AnimatedVisibility(
-                    visible = true,
-                    enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically()
-                ) {
-                    MyMessageItem(msg)
-                }
+                MyMessageItem(msg)
             }
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopBar(navController: NavController) {
+fun TopBar(
+    navController: NavController,
+    viewModel: EncryptedLogsViewModel
+) {
 
+    val keySizes = listOf(1024, 2048, 3072, 4096, 8192)
     val expanded = remember { mutableStateOf(false) }
+    val showDialog = remember { mutableStateOf(false) }
 
     Row(modifier = Modifier
         .fillMaxWidth()
@@ -241,6 +255,62 @@ fun TopBar(navController: NavController) {
                         }
 
                     )
+
+                    DropdownMenuItem(
+                        text = {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(0.3f)
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.armor),
+                                        contentDescription = "",
+                                        tint = Color(0xFF919191),
+                                        modifier = Modifier.size(32.dp)
+                                    )
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .weight(0.7f)
+                                ) {
+                                    Text(
+                                        text = "Усилить защиту",
+                                        textAlign = TextAlign.Center,
+                                        fontSize = 18.sp,
+                                        modifier = Modifier.align(Alignment.Center)
+                                    )
+                                }
+
+                            }
+                        },
+                        modifier = Modifier
+                            .height(40.dp)
+                            .wrapContentWidth(),
+                        onClick = {
+                            showDialog.value = true
+
+                            /*
+                            Slider(
+                                value = viewModel.keySize.toFloat(),                    // (1)
+                                onValueChange = { newValue ->                           // (2)
+                                    val closest = keySizes.minByOrNull {                // (3)
+                                        abs(it - newValue.toInt())                      // (4)
+                                    } ?: 2048                                           // (5)
+                                    viewModel.setKeySize(closest)                       // (6)
+                                },
+                                valueRange = 1024f..8192f,                              // (7)
+                                steps = keySizes.size - 2,                              // (8)
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                             */
+                        }
+                    )
                 }
             }
         }
@@ -251,7 +321,8 @@ fun TopBar(navController: NavController) {
 fun BottomBar(
     textValue: MutableState<String> = mutableStateOf(""),
     rsa: RSAObject? = RSAObject(),
-    viewModel: EncryptedLogsViewModel
+    viewModel: EncryptedLogsViewModel,
+    scope: CoroutineScope
 ) {
     val isViewGallery = textValue.value.isEmpty()
     val imePadding = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
@@ -364,19 +435,19 @@ fun BottomBar(
 
                         viewModel.addMessage(thisText)
 
-                        val encryptArray = encryptedMessage(
-                            thisText,
-                            rsa!!.e,
-                            rsa.n,
-                            viewModel = viewModel
-                        )
+                        scope.launch {
+                            val deferredEncrypt = async(Dispatchers.IO) {
+                                encryptedMessage(thisText, rsa!!.e, rsa.n, viewModel)
+                            }
 
-                        val decryptArray = decryptMessage(
-                            encryptArray,
-                            rsa.d,
-                            rsa.n,
-                            viewModel
-                        )
+                            val encryptArray = deferredEncrypt.await()
+
+                            val decryptArray = async(Dispatchers.IO) {
+                                decryptMessage(encryptArray, rsa!!.d, rsa.n, viewModel)
+                            }
+
+                            val decryptedResult = decryptArray.await()
+                        }
                     },
                     modifier = Modifier.size(64.dp)
                 ) {

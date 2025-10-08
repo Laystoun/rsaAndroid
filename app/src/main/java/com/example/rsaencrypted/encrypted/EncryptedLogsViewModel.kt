@@ -12,6 +12,22 @@ class EncryptedLogsViewModel : ViewModel() {
 
     val logs: SnapshotStateList<String> = mutableStateListOf()
     val messages = mutableStateListOf<ChatMessage>()
+    var keySize by mutableStateOf(2048)
+
+    fun updateKeySize(newSize: Int) {
+        if (newSize != keySize) {
+            keySize = newSize
+            regenerateKeys() // пересоздаём ключи при смене размера
+        }
+    }
+
+    private fun regenerateKeys() {
+        log("Генерация RSA ключей (${keySize} бит)...\n")
+        rsa = RSAObject(bitLength = keySize)
+        log("ПУБЛИЧНЫЙ КЛЮЧ: n=${rsa!!.n}, e=${rsa!!.e}\n")
+        log("ПРИВАТНЫЙ КЛЮЧ: d=${rsa!!.d}\n")
+    }
+
     var rsa by mutableStateOf<RSAObject?>(null)
         private set
 
